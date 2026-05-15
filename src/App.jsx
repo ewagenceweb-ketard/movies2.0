@@ -46,7 +46,7 @@ function runSmallTests() {
   console.assert(demoCredits.directors.length > 0, "demo credits include a director");
 }
 
-function MovieCard({ movie, onClick, variant = "normal" }) {
+function MovieCard({ movie, onClick, variant = "normal", isFavorite = false, onToggleFavorite }) {
   const style = variant === "netflix"
     ? "from-red-950 to-slate-950 border-red-900"
     : variant === "ai"
@@ -54,19 +54,33 @@ function MovieCard({ movie, onClick, variant = "normal" }) {
       : "from-slate-900 to-slate-950 border-slate-800";
 
   return (
-    <button
-      type="button"
-      onClick={() => onClick(movie)}
-      className={`text-left rounded-2xl border bg-gradient-to-b ${style} overflow-hidden hover:scale-105 transition-transform`}
-    >
-      <img src={poster(movie.poster_path)} alt={movie.title || "Affiche"} className="w-full h-64 object-cover" />
-      <div className="p-3">
-        <p className="font-semibold text-sm line-clamp-1">{movie.title || "Sans titre"}</p>
-        <p className="text-xs text-slate-400 mt-1">
-          {movie.release_date?.slice(0, 4) || "—"} • ⭐ {movie.vote_average?.toFixed(1) || "N/A"}
-        </p>
-      </div>
-    </button>
+    <div className={`relative rounded-2xl border bg-gradient-to-b ${style} overflow-hidden hover:scale-105 transition-transform`}>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleFavorite?.(movie);
+        }}
+        className={`absolute top-2 right-2 z-10 w-8 h-8 rounded-full text-sm flex items-center justify-center shadow-lg ${isFavorite ? "bg-red-500 text-white" : "bg-black/70 text-white"}`}
+        aria-label={isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+        title={isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+      >
+        {isFavorite ? "♥" : "♡"}
+      </button>
+      <button
+        type="button"
+        onClick={() => onClick(movie)}
+        className="w-full text-left"
+      >
+        <img src={poster(movie.poster_path)} alt={movie.title || "Affiche"} className="w-full h-64 object-cover" />
+        <div className="p-3">
+          <p className="font-semibold text-sm line-clamp-1">{movie.title || "Sans titre"}</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {movie.release_date?.slice(0, 4) || "—"} • ⭐ {movie.vote_average?.toFixed(1) || "N/A"}
+          </p>
+        </div>
+      </button>
+    </div>
   );
 }
 
@@ -106,6 +120,13 @@ function Section({ id, title, subtitle, loading, empty, children }) {
 
 export default function MovieDashboard() {
   const [movies, setMovies] = useState(demoMovies);
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("films-de-ketard-favorites") || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [actors, setActors] = useState([]);
   const [year, setYear] = useState("");
   const [decade, setDecade] = useState("");
@@ -164,6 +185,19 @@ export default function MovieDashboard() {
     setControlsOpen(false);
   }
 
+  function isFavoriteMovie(movieId) {
+    return favorites.some((movie) => movie.id === movieId);
+  }
+
+  function toggleFavorite(movie) {
+    setFavorites((current) => {
+      const exists = current.some((item) => item.id === movie.id);
+      const next = exists ? current.filter((item) => item.id !== movie.id) : [{ ...movie }, ...current];
+      localStorage.setItem("films-de-ketard-favorites", JSON.stringify(next));
+      return next;
+    });
+  }
+
   function resetAllFilters() {
     setYear("");
     setDecade("");
@@ -209,7 +243,11 @@ export default function MovieDashboard() {
     try {
       const ids = list.slice(0, 10).map((m) => m.id);
       const data = await Promise.all(ids.map((id) => json(`${BASE_URL}/movie/${id}/credits?api_key=${API_KEY}`).catch(() => null)));
-      setActors(unique(data.flatMap((c) => c?.cast?.slice(0, 8) || [])).map((p) => ({ id: p.id, name: p.name })));
+      setActors(
+        unique(data.flatMap((c) => c?.cast?.slice(0, 8) || []))
+          .map((p) => ({ id: p.id, name: p.name }))
+          .sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }))
+      );
     } catch {
       setActors([]);
     }
@@ -436,7 +474,7 @@ export default function MovieDashboard() {
                 </div>
 
                 <div className="flex flex-wrap gap-2 mb-6">
-                  {[["all-movies-section", "Tous les Films"], ["ai-recommendations-section", "Recommandations IA"], ["best-movies-section", "Meilleurs Films"], ["netflix-section", "Netflix"], ["french-movies-section", "Films Français"]].map(([id, label]) => (
+                  {[["all-movies-section", "Tous les Films"], ["favorites-section", "Mes favoris"], ["ai-recommendations-section", "Recommandations IA"], ["best-movies-section", "Meilleurs Films"], ["netflix-section", "Netflix"], ["french-movies-section", "Films Français"]].map(([id, label]) => (
                     <button key={id} type="button" onClick={() => sectionTop(id)} className="px-2 py-1 rounded-md bg-slate-800 font-medium text-xs">
                       {label}
                     </button>
@@ -529,34 +567,44 @@ export default function MovieDashboard() {
             <p className="text-center text-slate-400 my-8">Chargement des films...</p>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {movies.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} />)}
+              {movies.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
             </div>
           )}
           <Pagination page={page} total={totalPages} loading={loading} previous={() => goPage(-1)} next={() => goPage(1)} />
         </section>
 
+        <Section id="favorites-section" title="❤️ Mes favoris" subtitle={`${favorites.length} film${favorites.length > 1 ? "s" : ""} dans tes favoris`} loading={false} empty="Aucun favori pour le moment.">
+          {favorites.length ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {favorites.map((m) => (
+                <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />
+              ))}
+            </div>
+          ) : null}
+        </Section>
+
         <Section id="ai-recommendations-section" title="🤖 Recommandations IA" subtitle="Suggestions basées sur les tendances TMDb de la semaine." loading={aiLoading} empty="Aucune recommandation IA.">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4">
-            {aiPicks.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} variant="ai" />)}
+            {aiPicks.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} variant="ai" isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
           </div>
         </Section>
 
         <Section id="best-movies-section" title="🏆 Meilleurs Films" subtitle={`Classement de tous les temps TMDb • Page ${bestPage} / ${bestTotal}`} loading={bestLoading} empty="Aucun meilleur film trouvé.">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4">
-            {best.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} />)}
+            {best.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
           </div>
           <Pagination page={bestPage} total={bestTotal} loading={bestLoading} previous={() => goBest(-3)} next={() => goBest(3)} />
         </Section>
 
         <Section id="netflix-section" title="🍿 Nouveautés Films NETFLIX" subtitle="Nouveautés films Netflix récentes disponibles en Belgique." loading={netflixLoading} empty="Aucun film Netflix trouvé.">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4">
-            {netflix.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} variant="netflix" />)}
+            {netflix.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} variant="netflix" isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
           </div>
         </Section>
 
         <Section id="french-movies-section" title="🇫🇷 Films Français" subtitle={`Meilleurs films francophones TMDb • Page ${frenchPage} / ${frenchTotal}`} loading={frenchLoading} empty="Aucun film français trouvé.">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4">
-            {french.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} />)}
+            {french.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
           </div>
           <Pagination page={frenchPage} total={frenchTotal} loading={frenchLoading} previous={() => goFrench(-3)} next={() => goFrench(3)} />
         </Section>
@@ -569,7 +617,16 @@ export default function MovieDashboard() {
               </button>
               <img src={poster(selectedMovie.poster_path)} alt={selectedMovie.title} className="w-full h-96 object-cover" />
               <div className="p-6">
-                <h2 className="text-3xl font-bold mb-2">{selectedMovie.title}</h2>
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <h2 className="text-3xl font-bold">{selectedMovie.title}</h2>
+                  <button
+                    type="button"
+                    onClick={() => toggleFavorite(selectedMovie)}
+                    className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold ${isFavoriteMovie(selectedMovie.id) ? "bg-red-500 text-white" : "bg-white text-slate-950"}`}
+                  >
+                    {isFavoriteMovie(selectedMovie.id) ? "♥ Favori" : "♡ Ajouter"}
+                  </button>
+                </div>
                 <p className="text-slate-400 mb-4">Sortie : {selectedMovie.release_date || "Inconnue"}</p>
                 <p className="mb-4">⭐ Note : {selectedMovie.vote_average?.toFixed(1) || "N/A"}</p>
                 <p className="text-slate-300 mb-6 leading-relaxed">
@@ -614,7 +671,7 @@ export default function MovieDashboard() {
                         <p className="text-slate-400">Chargement des films similaires...</p>
                       ) : similarMovies.length ? (
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                          {similarMovies.map((movie) => <MovieCard key={movie.id} movie={movie} onClick={openMovie} />)}
+                          {similarMovies.map((movie) => <MovieCard key={movie.id} movie={movie} onClick={openMovie} isFavorite={isFavoriteMovie(movie.id)} onToggleFavorite={toggleFavorite} />)}
                         </div>
                       ) : (
                         <p className="text-slate-400">Aucun film similaire trouvé.</p>
