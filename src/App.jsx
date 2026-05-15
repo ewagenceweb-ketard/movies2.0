@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const API_KEY = import.meta.env.VITE_TMDB_API_KEY || "1294937e46c8e67982b2448c40ef9a31";
+const API_KEY = "1294937e46c8e67982b2448c40ef9a31";
 const BASE_URL = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/w500";
 
@@ -181,7 +181,7 @@ export default function MovieDashboard() {
     try {
       setLoading(true);
       const makeUrl = (p) => {
-        let url = `${BASE_URL}/discover/movie?api_key=${API_KEY}&sort_by=popularity.desc&page=${p}`;
+        let url = `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=fr-FR&sort_by=popularity.desc&page=${p}`;
         if (range) url += `&primary_release_date.gte=${range[2]}&primary_release_date.lte=${range[3]}`;
         else if (year) url += `&primary_release_year=${year}`;
         else url += "&primary_release_date.gte=1980-01-01";
@@ -218,7 +218,7 @@ export default function MovieDashboard() {
   async function loadAi() {
     try {
       setAiLoading(true);
-      const data = await Promise.all([1, 2].map((p) => json(`${BASE_URL}/trending/movie/week?api_key=${API_KEY}&page=${p}`)));
+      const data = await Promise.all([1, 2].map((p) => json(`${BASE_URL}/trending/movie/week?api_key=${API_KEY}&language=fr-FR&page=${p}`)));
       setAi(unique(data.flatMap((p) => p.results || [])).filter((m) => m.poster_path));
     } catch {
       setAi(demoMovies);
@@ -230,7 +230,7 @@ export default function MovieDashboard() {
   async function loadBest(targetPage = 1) {
     try {
       setBestLoading(true);
-      const data = await Promise.all([0, 1, 2].map((i) => json(`${BASE_URL}/movie/top_rated?api_key=${API_KEY}&page=${targetPage + i}`)));
+      const data = await Promise.all([0, 1, 2].map((i) => json(`${BASE_URL}/movie/top_rated?api_key=${API_KEY}&language=fr-FR&page=${targetPage + i}`)));
       setBest(unique(data.flatMap((p) => p.results || [])).filter((m) => m.poster_path).slice(0, 60));
       setBestTotal(Math.min(data[0]?.total_pages || 1, 500));
     } catch {
@@ -248,7 +248,7 @@ export default function MovieDashboard() {
       const start = new Date();
       start.setMonth(start.getMonth() - 3);
       const startDate = start.toISOString().slice(0, 10);
-      const url = (p) => `${BASE_URL}/discover/movie?api_key=${API_KEY}&with_watch_providers=8&watch_region=BE&primary_release_date.gte=${startDate}&primary_release_date.lte=${today}&sort_by=primary_release_date.desc&without_genres=99,10770&page=${p}`;
+      const url = (p) => `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=fr-FR&with_watch_providers=8&watch_region=BE&primary_release_date.gte=${startDate}&primary_release_date.lte=${today}&sort_by=primary_release_date.desc&without_genres=99,10770&page=${p}`;
       const data = await Promise.all([1, 2, 3].map((p) => json(url(p))));
       setNetflix(unique(data.flatMap((p) => p.results || [])).filter((m) => m.poster_path).slice(0, 60));
     } catch {
@@ -261,7 +261,7 @@ export default function MovieDashboard() {
   async function loadFrench(targetPage = 1) {
     try {
       setFrenchLoading(true);
-      const url = (p) => `${BASE_URL}/discover/movie?api_key=${API_KEY}&with_original_language=fr&sort_by=vote_average.desc&vote_count.gte=500&without_genres=99,10770&page=${p}`;
+      const url = (p) => `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=fr-FR&with_original_language=fr&sort_by=vote_average.desc&vote_count.gte=500&without_genres=99,10770&page=${p}`;
       const data = await Promise.all([0, 1, 2].map((i) => json(url(targetPage + i))));
       setFrench(unique(data.flatMap((p) => p.results || [])).filter((m) => m.poster_path && (m.vote_average || 0) >= 7).slice(0, 60));
       setFrenchTotal(Math.min(data[0]?.total_pages || 1, 500));
@@ -302,6 +302,15 @@ export default function MovieDashboard() {
   }
 
   async function openMovie(movie) {
+    try {
+      const detailsFr = await json(`${BASE_URL}/movie/${movie.id}?api_key=${API_KEY}&language=fr-FR`);
+      movie = {
+        ...movie,
+        overview: detailsFr.overview || movie.overview,
+        title: detailsFr.title || movie.title
+      };
+    } catch {}
+
     setSelectedMovie(movie);
     setCreditsLoading(true);
     setTrailerLoading(true);
@@ -563,7 +572,9 @@ export default function MovieDashboard() {
                 <h2 className="text-3xl font-bold mb-2">{selectedMovie.title}</h2>
                 <p className="text-slate-400 mb-4">Sortie : {selectedMovie.release_date || "Inconnue"}</p>
                 <p className="mb-4">⭐ Note : {selectedMovie.vote_average?.toFixed(1) || "N/A"}</p>
-                <p className="text-slate-300 mb-6">{selectedMovie.overview || "Aucun synopsis disponible."}</p>
+                <p className="text-slate-300 mb-6 leading-relaxed">
+                  {selectedMovie.overview || "Aucun synopsis disponible en français."}
+                </p>
 
                 <div className="mb-6">
                   <div className="flex gap-2 mb-4">
