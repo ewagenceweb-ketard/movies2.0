@@ -1,13 +1,5 @@
-# Films de Ketard
+Projet React + Vite compatible Vercel.
 
-Projet React + Vite compatible Vercel/GitHub.
-
-## Structure
-- `index.html` pointe vers `/src/main.jsx`
-- `src/main.jsx` monte React
-- `src/App.jsx` contient le code complet actuel
-
-## Vercel
-- Framework Preset : Vite
-- Build Command : `npm run build`
-- Output Directory : `dist`
+- index.html -> /src/main.jsx
+- src/main.jsx monte React
+- src/App.jsx contient le code complet actuel

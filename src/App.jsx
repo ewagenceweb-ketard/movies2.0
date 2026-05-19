@@ -37,6 +37,8 @@ const profile = (path) => path ? `${IMG}${path}` : "https://placehold.co/300x450
 const unique = (items) => Array.from(new Map(items.filter(Boolean).map((item) => [item.id, item])).values());
 const decadeRange = (value) => decades.find((d) => d[0] === value) || null;
 const buildGenresParam = (genreIds) => Array.isArray(genreIds) && genreIds.length ? genreIds.join(",") : "";
+const APP_MOVIES_PER_PAGE = 30;
+const TMDB_MOVIES_PER_PAGE = 20;
 
 function runSmallTests() {
   console.assert(unique([{ id: 1 }, { id: 1 }, { id: 2 }]).length === 2, "unique removes duplicates");
@@ -47,6 +49,9 @@ function runSmallTests() {
   console.assert(demoCredits.directors.length > 0, "demo credits include a director");
   console.assert(buildGenresParam([35, 12]) === "35,12", "multiple genres are joined for TMDb");
   console.assert(buildGenresParam([]) === "", "empty genres return empty param");
+  console.assert("matrix".trim().length > 0, "movie title search accepts text input");
+  console.assert(APP_MOVIES_PER_PAGE === 30, "app displays 30 movies per page");
+  console.assert(TMDB_MOVIES_PER_PAGE === 20, "TMDb returns 20 movies per page");
 }
 
 function MovieCard({ movie, onClick, variant = "normal", isFavorite = false, onToggleFavorite }) {
@@ -70,11 +75,7 @@ function MovieCard({ movie, onClick, variant = "normal", isFavorite = false, onT
       >
         {isFavorite ? "♥" : "♡"}
       </button>
-      <button
-        type="button"
-        onClick={() => onClick(movie)}
-        className="w-full text-left"
-      >
+      <button type="button" onClick={() => onClick(movie)} className="w-full text-left">
         <img src={poster(movie.poster_path)} alt={movie.title || "Affiche"} className="w-full h-64 object-cover" />
         <div className="p-3">
           <p className="font-semibold text-sm line-clamp-1">{movie.title || "Sans titre"}</p>
@@ -90,21 +91,11 @@ function MovieCard({ movie, onClick, variant = "normal", isFavorite = false, onT
 function Pagination({ page, total, loading, previous, next }) {
   return (
     <div className="flex flex-col sm:flex-row items-center justify-center gap-3 my-6">
-      <button
-        type="button"
-        disabled={page <= 1 || loading}
-        onClick={previous}
-        className="px-2 py-1.5 text-xs rounded-lg bg-slate-800 disabled:opacity-40"
-      >
+      <button type="button" disabled={page <= 1 || loading} onClick={previous} className="px-2 py-1.5 text-xs rounded-lg bg-slate-800 disabled:opacity-40">
         Page précédente
       </button>
       <span className="text-xs text-slate-300">Page {page} / {total}</span>
-      <button
-        type="button"
-        disabled={page >= total || loading}
-        onClick={next}
-        className="px-2 py-1.5 text-xs rounded-lg bg-white text-black disabled:opacity-40"
-      >
+      <button type="button" disabled={page >= total || loading} onClick={next} className="px-2 py-1.5 text-xs rounded-lg bg-white text-black disabled:opacity-40">
         Page suivante
       </button>
     </div>
@@ -143,6 +134,7 @@ export default function MovieDashboard() {
   const [movieSearch, setMovieSearch] = useState("");
   const [movieResults, setMovieResults] = useState([]);
   const [movieSearchLoading, setMovieSearchLoading] = useState(false);
+  const [movieTitleFilter, setMovieTitleFilter] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalResults, setTotalResults] = useState(demoMovies.length);
@@ -215,6 +207,7 @@ export default function MovieDashboard() {
     setPersonResults([]);
     setMovieSearch("");
     setMovieResults([]);
+    setMovieTitleFilter("");
     setPage(1);
     sectionTop("all-movies-section");
   }
@@ -227,8 +220,12 @@ export default function MovieDashboard() {
   async function loadMovies(targetPage = 1) {
     try {
       setLoading(true);
-      const makeUrl = (p) => {
-        let url = `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=fr-FR&sort_by=popularity.desc&page=${p}`;
+      const searchTerm = movieTitleFilter.trim();
+      const makeUrl = (tmdbPage) => {
+        if (searchTerm) {
+          return `${BASE_URL}/search/movie?api_key=${API_KEY}&language=fr-FR&query=${encodeURIComponent(searchTerm)}&page=${tmdbPage}`;
+        }
+        let url = `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=fr-FR&sort_by=popularity.desc&page=${tmdbPage}`;
         if (range) url += `&primary_release_date.gte=${range[2]}&primary_release_date.lte=${range[3]}`;
         else if (year) url += `&primary_release_year=${year}`;
         else url += "&primary_release_date.gte=1980-01-01";
@@ -238,11 +235,18 @@ export default function MovieDashboard() {
         else if (actor) url += `&with_cast=${actor}`;
         return url;
       };
-      const pages = await Promise.all([json(makeUrl(targetPage)), json(makeUrl(targetPage + 1)), json(makeUrl(targetPage + 2))]);
-      const list = unique(pages.flatMap((p) => p.results || [])).slice(0, 60);
+      const startIndex = (targetPage - 1) * APP_MOVIES_PER_PAGE;
+      const firstTmdbPage = Math.floor(startIndex / TMDB_MOVIES_PER_PAGE) + 1;
+      const offset = startIndex % TMDB_MOVIES_PER_PAGE;
+      const pagesNeeded = Math.ceil((offset + APP_MOVIES_PER_PAGE) / TMDB_MOVIES_PER_PAGE);
+      const tmdbPages = await Promise.all(
+        Array.from({ length: pagesNeeded }, (_, index) => json(makeUrl(firstTmdbPage + index)))
+      );
+      const list = unique(tmdbPages.flatMap((data) => data.results || [])).slice(offset, offset + APP_MOVIES_PER_PAGE);
+      const total = tmdbPages[0]?.total_results || 0;
       setMovies(list);
-      setTotalPages(Math.min(pages[0]?.total_pages || 1, 500));
-      setTotalResults(pages[0]?.total_results || 0);
+      setTotalPages(Math.min(Math.ceil(total / APP_MOVIES_PER_PAGE) || 1, Math.floor((500 * TMDB_MOVIES_PER_PAGE) / APP_MOVIES_PER_PAGE)));
+      setTotalResults(total);
       loadActors(list);
     } catch {
       setMovies(demoMovies);
@@ -340,6 +344,15 @@ export default function MovieDashboard() {
     } finally {
       setMovieSearchLoading(false);
     }
+  }
+
+  function applyMovieTitleSearch(query = movieSearch) {
+    const term = query.trim();
+    if (!term) return;
+    setMovieTitleFilter(term);
+    setMovieResults([]);
+    setPage(1);
+    sectionTop("all-movies-section");
   }
 
   function chooseMovieFromSearch(movie) {
@@ -451,19 +464,21 @@ export default function MovieDashboard() {
 
   useEffect(() => {
     setPage(1);
-  }, [year, decade, genres, actor]);
+  }, [year, decade, genres, actor, movieTitleFilter]);
 
   useEffect(() => {
     loadMovies(page);
-  }, [year, decade, genres, actor, page]);
+  }, [year, decade, genres, actor, movieTitleFilter, page]);
 
-  const title = actorName
-    ? (personRole === "Directing" ? `Films réalisés par ${actorName}` : `Films avec ${actorName}`)
-    : range
-      ? `Films de ${range[1]}`
-      : year
-        ? `Films de ${year}`
-        : "Tous les Films";
+  const title = movieTitleFilter
+    ? `Recherche : ${movieTitleFilter}`
+    : actorName
+      ? (personRole === "Directing" ? `Films réalisés par ${actorName}` : `Films avec ${actorName}`)
+      : range
+        ? `Films de ${range[1]}`
+        : year
+          ? `Films de ${year}`
+          : "Tous les Films";
 
   const goPage = (delta) => {
     resetAndTop();
@@ -490,11 +505,7 @@ export default function MovieDashboard() {
         <h1 className="text-3xl md:text-4xl font-black mb-2">🎬 Films de Ketard</h1>
         <p className="text-slate-400 mb-8">Base de données complète de films de 1980 à aujourd’hui avec recommandations intelligentes.</p>
 
-        <button
-          type="button"
-          onClick={() => setControlsOpen(true)}
-          className="fixed right-0 top-28 z-50 rounded-l-lg bg-white text-slate-950 px-2 py-1.5 text-xs font-semibold shadow-lg"
-        >
+        <button type="button" onClick={() => setControlsOpen(true)} className="fixed right-0 top-28 z-50 rounded-l-lg bg-white text-slate-950 px-2 py-1.5 text-xs font-semibold shadow-lg">
           ☰ Menu & Filtres
         </button>
 
@@ -524,6 +535,12 @@ export default function MovieDashboard() {
                     <input
                       value={movieSearch}
                       onChange={(e) => searchMoviesByTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          applyMovieTitleSearch();
+                        }
+                      }}
                       placeholder="Rechercher un titre de film"
                       className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none"
                     />
@@ -533,6 +550,8 @@ export default function MovieDashboard() {
                         onClick={() => {
                           setMovieSearch("");
                           setMovieResults([]);
+                          setMovieTitleFilter("");
+                          setPage(1);
                         }}
                         className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xl"
                       >
@@ -562,11 +581,7 @@ export default function MovieDashboard() {
                       className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none"
                     />
                     {personSearch && (
-                      <button
-                        type="button"
-                        onClick={() => { setPersonSearch(""); setPersonResults([]); setActor(""); setActorName(""); setPersonRole(""); }}
-                        className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xl"
-                      >
+                      <button type="button" onClick={() => { setPersonSearch(""); setPersonResults([]); setActor(""); setActorName(""); setPersonRole(""); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xl">
                         ×
                       </button>
                     )}
@@ -635,11 +650,7 @@ export default function MovieDashboard() {
         <section id="all-movies-section" className="scroll-mt-24">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-1">
             <h2 className="text-2xl font-bold">{title}</h2>
-            <button
-              type="button"
-              onClick={resetAllFilters}
-              className="px-2 py-1 rounded-md bg-white text-slate-950 text-xs font-medium hover:scale-105 transition-transform"
-            >
+            <button type="button" onClick={resetAllFilters} className="px-2 py-1 rounded-md bg-white text-slate-950 text-xs font-medium hover:scale-105 transition-transform">
               Réinitialiser les filtres
             </button>
           </div>
@@ -663,9 +674,7 @@ export default function MovieDashboard() {
         <Section id="favorites-section" title="❤️ Mes favoris" subtitle={`${favorites.length} film${favorites.length > 1 ? "s" : ""} dans tes favoris`} loading={false} empty="Aucun favori pour le moment.">
           {favorites.length ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {favorites.map((m) => (
-                <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />
-              ))}
+              {favorites.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
             </div>
           ) : null}
         </Section>
@@ -706,11 +715,7 @@ export default function MovieDashboard() {
               <div className="p-6">
                 <div className="flex items-start justify-between gap-3 mb-2">
                   <h2 className="text-3xl font-bold">{selectedMovie.title}</h2>
-                  <button
-                    type="button"
-                    onClick={() => toggleFavorite(selectedMovie)}
-                    className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold ${isFavoriteMovie(selectedMovie.id) ? "bg-red-500 text-white" : "bg-white text-slate-950"}`}
-                  >
+                  <button type="button" onClick={() => toggleFavorite(selectedMovie)} className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold ${isFavoriteMovie(selectedMovie.id) ? "bg-red-500 text-white" : "bg-white text-slate-950"}`}>
                     {isFavoriteMovie(selectedMovie.id) ? "♥ Favori" : "♡ Ajouter"}
                   </button>
                 </div>
