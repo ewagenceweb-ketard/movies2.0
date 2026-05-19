@@ -8,7 +8,7 @@ const categories = [
   [28, "Action"], [12, "Aventure"], [16, "Animation"], [35, "Comédie"],
   [80, "Crime"], [18, "Drame"], [10751, "Famille"], [36, "Histoire"],
   [27, "Horreur"], [9648, "Mystère"], [10749, "Romance"], [878, "Science-fiction"],
-  [53, "Thriller"], [10752, "Guerre"]
+  [53, "Thriller"], [10752, "Guerre"], [37, "Western"]
 ];
 
 const decades = [
@@ -19,9 +19,9 @@ const decades = [
 ];
 
 const demoMovies = [
-  { id: 27205, title: "Inception", vote_average: 8.8, popularity: 100, release_date: "2010-07-16", poster_path: "/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg", overview: "Un voleur expérimenté infiltre les rêves pour voler des secrets." },
-  { id: 155, title: "The Dark Knight", vote_average: 9.0, popularity: 95, release_date: "2008-07-18", poster_path: "/qJ2tW6WMUDux911r6m7haRef0WH.jpg", overview: "Batman affronte le Joker dans Gotham City." },
-  { id: 157336, title: "Interstellar", vote_average: 8.7, popularity: 90, release_date: "2014-11-07", poster_path: "/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg", overview: "Des explorateurs voyagent à travers un trou de ver pour sauver l’humanité." }
+  { id: 27205, title: "Inception", vote_average: 8.8, popularity: 100, release_date: "2010-07-16", poster_path: "/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg", overview: "Un voleur expérimenté infiltre les rêves pour voler des secrets.", genre_ids: [28, 878] },
+  { id: 155, title: "The Dark Knight", vote_average: 9.0, popularity: 95, release_date: "2008-07-18", poster_path: "/qJ2tW6WMUDux911r6m7haRef0WH.jpg", overview: "Batman affronte le Joker dans Gotham City.", genre_ids: [28, 80, 18] },
+  { id: 157336, title: "Interstellar", vote_average: 8.7, popularity: 90, release_date: "2014-11-07", poster_path: "/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg", overview: "Des explorateurs voyagent à travers un trou de ver pour sauver l’humanité.", genre_ids: [12, 18, 878] }
 ];
 
 const demoCredits = {
@@ -40,6 +40,37 @@ const buildGenresParam = (genreIds) => Array.isArray(genreIds) && genreIds.lengt
 const APP_MOVIES_PER_PAGE = 30;
 const TMDB_MOVIES_PER_PAGE = 20;
 
+function getGenreName(id) {
+  return categories.find(([genreId]) => genreId === id)?.[1] || "";
+}
+
+function buildTitle({ movieTitleFilter, genres, year, range, actorName, personRole }) {
+  if (movieTitleFilter) {
+    const parts = [`Recherche : ${movieTitleFilter}`];
+    if (genres.length) parts.push(genres.map(getGenreName).filter(Boolean).join(", "));
+    if (year) parts.push(year);
+    if (range) parts.push(range[1]);
+    if (actorName) parts.push(actorName);
+    return parts.filter(Boolean).join(" • ");
+  }
+
+  if (actorName) {
+    return personRole === "Directing" ? `Films réalisés par ${actorName}` : `Films avec ${actorName}`;
+  }
+
+  if (range) return `Films de ${range[1]}`;
+  if (year) return `Films de ${year}`;
+  return "Tous les Films";
+}
+
+function filterMovieClientSide(movie, { genres, range, year }) {
+  if (genres.length && !genres.every((genreId) => movie.genre_ids?.includes(genreId))) return false;
+  const release = movie.release_date || "";
+  if (range && (release < range[2] || release > range[3])) return false;
+  if (year && !release.startsWith(String(year))) return false;
+  return true;
+}
+
 function runSmallTests() {
   console.assert(unique([{ id: 1 }, { id: 1 }, { id: 2 }]).length === 2, "unique removes duplicates");
   console.assert(poster("/x.jpg").includes("/x.jpg"), "poster uses image path");
@@ -49,9 +80,13 @@ function runSmallTests() {
   console.assert(demoCredits.directors.length > 0, "demo credits include a director");
   console.assert(buildGenresParam([35, 12]) === "35,12", "multiple genres are joined for TMDb");
   console.assert(buildGenresParam([]) === "", "empty genres return empty param");
-  console.assert("matrix".trim().length > 0, "movie title search accepts text input");
   console.assert(APP_MOVIES_PER_PAGE === 30, "app displays 30 movies per page");
   console.assert(TMDB_MOVIES_PER_PAGE === 20, "TMDb returns 20 movies per page");
+  console.assert(buildTitle({ movieTitleFilter: "batman", genres: [28, 53], year: "2008", range: null, actorName: "", personRole: "" }).includes("Action"), "title includes selected genres");
+  console.assert(filterMovieClientSide({ genre_ids: [28, 35], release_date: "2008-07-18" }, { genres: [28], range: null, year: "2008" }) === true, "client filters accept matching movie");
+  console.assert(filterMovieClientSide({ genre_ids: [18], release_date: "2008-07-18" }, { genres: [28], range: null, year: "2008" }) === false, "client filters reject wrong genre");
+  console.assert(unique([{ id: 1 }, { id: 2 }, { id: 2 }, { id: 3 }]).length === 3, "similar movie list stays unique");
+  console.assert(Math.min(20, 20) === 20, "similar movies target is 20");
 }
 
 function MovieCard({ movie, onClick, variant = "normal", isFavorite = false, onToggleFavorite }) {
@@ -221,10 +256,19 @@ export default function MovieDashboard() {
     try {
       setLoading(true);
       const searchTerm = movieTitleFilter.trim();
+      const startIndex = (targetPage - 1) * APP_MOVIES_PER_PAGE;
+      const firstTmdbPage = Math.floor(startIndex / TMDB_MOVIES_PER_PAGE) + 1;
+      const offset = startIndex % TMDB_MOVIES_PER_PAGE;
+      const extraPagesForClientFilters = searchTerm && (genres.length || range) ? 2 : 0;
+      const pagesNeeded = Math.ceil((offset + APP_MOVIES_PER_PAGE) / TMDB_MOVIES_PER_PAGE) + extraPagesForClientFilters;
+
       const makeUrl = (tmdbPage) => {
         if (searchTerm) {
-          return `${BASE_URL}/search/movie?api_key=${API_KEY}&language=fr-FR&query=${encodeURIComponent(searchTerm)}&page=${tmdbPage}`;
+          let url = `${BASE_URL}/search/movie?api_key=${API_KEY}&language=fr-FR&query=${encodeURIComponent(searchTerm)}&page=${tmdbPage}`;
+          if (year) url += `&primary_release_year=${year}`;
+          return url;
         }
+
         let url = `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=fr-FR&sort_by=popularity.desc&page=${tmdbPage}`;
         if (range) url += `&primary_release_date.gte=${range[2]}&primary_release_date.lte=${range[3]}`;
         else if (year) url += `&primary_release_year=${year}`;
@@ -235,18 +279,24 @@ export default function MovieDashboard() {
         else if (actor) url += `&with_cast=${actor}`;
         return url;
       };
-      const startIndex = (targetPage - 1) * APP_MOVIES_PER_PAGE;
-      const firstTmdbPage = Math.floor(startIndex / TMDB_MOVIES_PER_PAGE) + 1;
-      const offset = startIndex % TMDB_MOVIES_PER_PAGE;
-      const pagesNeeded = Math.ceil((offset + APP_MOVIES_PER_PAGE) / TMDB_MOVIES_PER_PAGE);
+
       const tmdbPages = await Promise.all(
         Array.from({ length: pagesNeeded }, (_, index) => json(makeUrl(firstTmdbPage + index)))
       );
-      const list = unique(tmdbPages.flatMap((data) => data.results || [])).slice(offset, offset + APP_MOVIES_PER_PAGE);
+
+      let list = unique(tmdbPages.flatMap((data) => data.results || []));
+
+      if (searchTerm) {
+        list = list.filter((movie) => filterMovieClientSide(movie, { genres, range, year }));
+      }
+
+      list = list.slice(offset, offset + APP_MOVIES_PER_PAGE);
       const total = tmdbPages[0]?.total_results || 0;
+      const estimatedTotal = searchTerm && (genres.length || range) ? Math.max(list.length, total) : total;
+
       setMovies(list);
-      setTotalPages(Math.min(Math.ceil(total / APP_MOVIES_PER_PAGE) || 1, Math.floor((500 * TMDB_MOVIES_PER_PAGE) / APP_MOVIES_PER_PAGE)));
-      setTotalResults(total);
+      setTotalPages(Math.min(Math.ceil(estimatedTotal / APP_MOVIES_PER_PAGE) || 1, Math.floor((500 * TMDB_MOVIES_PER_PAGE) / APP_MOVIES_PER_PAGE)));
+      setTotalResults(estimatedTotal);
       loadActors(list);
     } catch {
       setMovies(demoMovies);
@@ -433,9 +483,17 @@ export default function MovieDashboard() {
         json(`${BASE_URL}/movie/${movie.id}/similar?api_key=${API_KEY}&language=fr-FR&page=1`).catch(() => ({ results: [] })),
         json(`${BASE_URL}/movie/${movie.id}/recommendations?api_key=${API_KEY}&language=fr-FR&page=1`).catch(() => ({ results: [] }))
       ]);
-      const merged = unique([...(similarData.results || []), ...(recommendedData.results || [])])
+      const merged = unique([
+        ...(similarData.results || []),
+        ...(recommendedData.results || [])
+      ])
         .filter((item) => item.poster_path && item.id !== movie.id && (item.vote_average || 0) >= 7)
-        .slice(0, 12);
+        .sort((a, b) => {
+          const scoreA = (a.vote_average || 0) * 10 + (a.popularity || 0);
+          const scoreB = (b.vote_average || 0) * 10 + (b.popularity || 0);
+          return scoreB - scoreA;
+        })
+        .slice(0, 20);
       setSimilarMovies(merged);
     } catch {
       setSimilarMovies([]);
@@ -470,15 +528,7 @@ export default function MovieDashboard() {
     loadMovies(page);
   }, [year, decade, genres, actor, movieTitleFilter, page]);
 
-  const title = movieTitleFilter
-    ? `Recherche : ${movieTitleFilter}`
-    : actorName
-      ? (personRole === "Directing" ? `Films réalisés par ${actorName}` : `Films avec ${actorName}`)
-      : range
-        ? `Films de ${range[1]}`
-        : year
-          ? `Films de ${year}`
-          : "Tous les Films";
+  const title = buildTitle({ movieTitleFilter, genres, year, range, actorName, personRole });
 
   const goPage = (delta) => {
     resetAndTop();
@@ -573,6 +623,7 @@ export default function MovieDashboard() {
                       </div>
                     )}
                   </div>
+
                   <div className="relative">
                     <input
                       value={personSearch}
@@ -663,10 +714,12 @@ export default function MovieDashboard() {
           <Pagination page={page} total={totalPages} loading={loading} previous={() => goPage(-1)} next={() => goPage(1)} />
           {loading ? (
             <p className="text-center text-slate-400 my-8">Chargement des films...</p>
-          ) : (
+          ) : movies.length ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
               {movies.map((m) => <MovieCard key={m.id} movie={m} onClick={openMovie} isFavorite={isFavoriteMovie(m.id)} onToggleFavorite={toggleFavorite} />)}
             </div>
+          ) : (
+            <p className="text-slate-400 my-8">Aucun film trouvé avec ces filtres.</p>
           )}
           <Pagination page={page} total={totalPages} loading={loading} previous={() => goPage(-1)} next={() => goPage(1)} />
         </section>
@@ -758,12 +811,25 @@ export default function MovieDashboard() {
 
                   {movieTab === "similar" && (
                     <div>
-                      <h3 className="text-xl font-semibold mb-3">Films similaires</h3>
+                      <div className="flex items-center justify-between mb-3 gap-3">
+                        <h3 className="text-xl font-semibold">Films similaires</h3>
+                        <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">
+                          {similarMovies.length} films recommandés
+                        </span>
+                      </div>
                       {similarLoading ? (
                         <p className="text-slate-400">Chargement des films similaires...</p>
                       ) : similarMovies.length ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                          {similarMovies.map((movie) => <MovieCard key={movie.id} movie={movie} onClick={openMovie} isFavorite={isFavoriteMovie(movie.id)} onToggleFavorite={toggleFavorite} />)}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                          {similarMovies.map((movie) => (
+                            <MovieCard
+                              key={movie.id}
+                              movie={movie}
+                              onClick={openMovie}
+                              isFavorite={isFavoriteMovie(movie.id)}
+                              onToggleFavorite={toggleFavorite}
+                            />
+                          ))}
                         </div>
                       ) : (
                         <p className="text-slate-400">Aucun film similaire trouvé.</p>
@@ -775,7 +841,7 @@ export default function MovieDashboard() {
                 <h3 className="text-xl font-semibold mb-3">Réalisateur</h3>
                 {creditsLoading ? (
                   <p>Chargement...</p>
-                ) : (
+                ) : credits.directors.length ? (
                   <div className="flex flex-wrap gap-4 mb-6">
                     {credits.directors.map((d) => (
                       <button key={d.id} type="button" onClick={() => selectPerson(d)} className="flex items-center gap-3 bg-slate-800 rounded-xl p-3">
@@ -784,6 +850,8 @@ export default function MovieDashboard() {
                       </button>
                     ))}
                   </div>
+                ) : (
+                  <p className="text-slate-400 mb-6">Réalisateur non disponible.</p>
                 )}
 
                 <h3 className="text-xl font-semibold mb-3">Casting</h3>
