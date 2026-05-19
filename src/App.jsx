@@ -36,6 +36,7 @@ const poster = (path) => path ? `${IMG}${path}` : "https://placehold.co/500x750?
 const profile = (path) => path ? `${IMG}${path}` : "https://placehold.co/300x450?text=No+Photo";
 const unique = (items) => Array.from(new Map(items.filter(Boolean).map((item) => [item.id, item])).values());
 const decadeRange = (value) => decades.find((d) => d[0] === value) || null;
+const buildGenresParam = (genreIds) => Array.isArray(genreIds) && genreIds.length ? genreIds.join(",") : "";
 
 function runSmallTests() {
   console.assert(unique([{ id: 1 }, { id: 1 }, { id: 2 }]).length === 2, "unique removes duplicates");
@@ -44,6 +45,8 @@ function runSmallTests() {
   console.assert(decadeRange("bad") === null, "bad decade returns null");
   console.assert(categories.length > 0, "categories exist");
   console.assert(demoCredits.directors.length > 0, "demo credits include a director");
+  console.assert(buildGenresParam([35, 12]) === "35,12", "multiple genres are joined for TMDb");
+  console.assert(buildGenresParam([]) === "", "empty genres return empty param");
 }
 
 function MovieCard({ movie, onClick, variant = "normal", isFavorite = false, onToggleFavorite }) {
@@ -130,13 +133,16 @@ export default function MovieDashboard() {
   const [actors, setActors] = useState([]);
   const [year, setYear] = useState("");
   const [decade, setDecade] = useState("");
-  const [genre, setGenre] = useState(null);
+  const [genres, setGenres] = useState([]);
   const [actor, setActor] = useState("");
   const [actorName, setActorName] = useState("");
   const [personRole, setPersonRole] = useState("");
   const [personSearch, setPersonSearch] = useState("");
   const [personResults, setPersonResults] = useState([]);
   const [personLoading, setPersonLoading] = useState(false);
+  const [movieSearch, setMovieSearch] = useState("");
+  const [movieResults, setMovieResults] = useState([]);
+  const [movieSearchLoading, setMovieSearchLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalResults, setTotalResults] = useState(demoMovies.length);
@@ -201,14 +207,21 @@ export default function MovieDashboard() {
   function resetAllFilters() {
     setYear("");
     setDecade("");
-    setGenre(null);
+    setGenres([]);
     setActor("");
     setActorName("");
     setPersonRole("");
     setPersonSearch("");
     setPersonResults([]);
+    setMovieSearch("");
+    setMovieResults([]);
     setPage(1);
     sectionTop("all-movies-section");
+  }
+
+  function toggleGenre(genreId) {
+    setGenres((current) => current.includes(genreId) ? current.filter((item) => item !== genreId) : [...current, genreId]);
+    setPage(1);
   }
 
   async function loadMovies(targetPage = 1) {
@@ -219,7 +232,8 @@ export default function MovieDashboard() {
         if (range) url += `&primary_release_date.gte=${range[2]}&primary_release_date.lte=${range[3]}`;
         else if (year) url += `&primary_release_year=${year}`;
         else url += "&primary_release_date.gte=1980-01-01";
-        if (genre) url += `&with_genres=${genre}`;
+        const genresParam = buildGenresParam(genres);
+        if (genresParam) url += `&with_genres=${genresParam}`;
         if (actor && personRole === "Directing") url += `&with_crew=${actor}`;
         else if (actor) url += `&with_cast=${actor}`;
         return url;
@@ -311,6 +325,30 @@ export default function MovieDashboard() {
     }
   }
 
+  async function searchMoviesByTitle(query) {
+    setMovieSearch(query);
+    if (query.trim().length < 2) {
+      setMovieResults([]);
+      return;
+    }
+    try {
+      setMovieSearchLoading(true);
+      const data = await json(`${BASE_URL}/search/movie?api_key=${API_KEY}&language=fr-FR&query=${encodeURIComponent(query)}&page=1`);
+      setMovieResults((data.results || []).filter((movie) => movie.poster_path).slice(0, 8));
+    } catch {
+      setMovieResults([]);
+    } finally {
+      setMovieSearchLoading(false);
+    }
+  }
+
+  function chooseMovieFromSearch(movie) {
+    setMovieSearch(movie.title || "");
+    setMovieResults([]);
+    setControlsOpen(false);
+    openMovie(movie);
+  }
+
   async function searchPeople(query) {
     setPersonSearch(query);
     if (query.trim().length < 2) {
@@ -334,7 +372,7 @@ export default function MovieDashboard() {
     setPersonRole(person.known_for_department || "Acting");
     setPersonSearch(person.name);
     setPersonResults([]);
-    setGenre(null);
+    setGenres([]);
     setPage(1);
     sectionTop("all-movies-section");
   }
@@ -398,7 +436,7 @@ export default function MovieDashboard() {
     setActorName(person.name);
     setPersonRole(person.job === "Director" ? "Directing" : "Acting");
     setPersonSearch(person.name);
-    setGenre(null);
+    setGenres([]);
     setPage(1);
     setSelectedMovie(null);
   }
@@ -413,11 +451,11 @@ export default function MovieDashboard() {
 
   useEffect(() => {
     setPage(1);
-  }, [year, decade, genre, actor]);
+  }, [year, decade, genres, actor]);
 
   useEffect(() => {
     loadMovies(page);
-  }, [year, decade, genre, actor, page]);
+  }, [year, decade, genres, actor, page]);
 
   const title = actorName
     ? (personRole === "Directing" ? `Films réalisés par ${actorName}` : `Films avec ${actorName}`)
@@ -484,6 +522,40 @@ export default function MovieDashboard() {
                 <div className="grid gap-4 mb-6">
                   <div className="relative">
                     <input
+                      value={movieSearch}
+                      onChange={(e) => searchMoviesByTitle(e.target.value)}
+                      placeholder="Rechercher un titre de film"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none"
+                    />
+                    {movieSearch && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMovieSearch("");
+                          setMovieResults([]);
+                        }}
+                        className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xl"
+                      >
+                        ×
+                      </button>
+                    )}
+                    {movieSearchLoading && <p className="text-xs text-slate-400 mt-2">Recherche...</p>}
+                    {movieResults.length > 0 && (
+                      <div className="absolute left-0 right-0 mt-2 z-50 rounded-xl border border-slate-700 bg-slate-900 shadow-2xl overflow-hidden max-h-80 overflow-y-auto">
+                        {movieResults.map((movie) => (
+                          <button key={movie.id} type="button" onClick={() => chooseMovieFromSearch(movie)} className="w-full flex items-center gap-3 p-3 text-left hover:bg-slate-800">
+                            <img src={poster(movie.poster_path)} alt={movie.title} className="w-10 h-14 rounded object-cover" />
+                            <div>
+                              <p className="font-semibold line-clamp-1">{movie.title}</p>
+                              <p className="text-xs text-slate-400">{movie.release_date?.slice(0, 4) || "Date inconnue"} • ⭐ {movie.vote_average?.toFixed(1) || "N/A"}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
                       value={personSearch}
                       onChange={(e) => searchPeople(e.target.value)}
                       placeholder="Rechercher acteur ou réalisateur"
@@ -531,14 +603,29 @@ export default function MovieDashboard() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => setGenre(null)} className={`rounded-lg px-2 py-1 text-xs font-medium ${!genre ? "bg-white text-slate-950" : "bg-slate-800"}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGenres([]);
+                      setPage(1);
+                    }}
+                    className={`rounded-lg px-2 py-1 text-xs font-medium ${genres.length === 0 ? "bg-white text-slate-950" : "bg-slate-800"}`}
+                  >
                     Toutes catégories
                   </button>
-                  {categories.map(([id, name]) => (
-                    <button key={id} type="button" onClick={() => setGenre(id)} className={`rounded-lg px-2 py-1 text-xs font-medium ${genre === id ? "bg-white text-slate-950" : "bg-slate-800"}`}>
-                      {name}
-                    </button>
-                  ))}
+                  {categories.map(([id, name]) => {
+                    const selected = genres.includes(id);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => toggleGenre(id)}
+                        className={`rounded-lg px-2 py-1 text-xs font-medium ${selected ? "bg-white text-slate-950" : "bg-slate-800"}`}
+                      >
+                        {selected ? "✓ " : ""}{name}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </aside>
